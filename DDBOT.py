@@ -1,11 +1,30 @@
 # -- coding: utf-8 --**
 import yaml #pip install pyyaml
 import json, requests, math, time, sys, base64
+import os, logging  #日志系统
 import pymysql
 from dbutils.pooled_db import PooledDB
 # 忽略mysql警告
 from warnings import filterwarnings
 filterwarnings('ignore', category=pymysql.Warning)
+
+#日志系统
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+log_name = 'logs/' + time.strftime("%Y-%m-%d", time.localtime()) + '.log'  # 记录日志名
+logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8',
+                     level=logging.ERROR, force=True)
+"""
+使用方法：
+
+改日志文件名（比如换日期）：
+logging.basicConfig(filename=log_name, format='%(asctime)s %(message)s', 
+                        encoding='utf-8', level=logging.INFO, force=True)
+
+输出日志：
+logging.info('要输出的内容')
+
+"""
 
 def yaml_to_json(filepath):
     """
@@ -114,9 +133,14 @@ class QQBotInfo:
         该函数构造一个包括主播的昵称和封面图像URL的消息，
         并发送到指定的QQ群中，用于提醒群成员直播已经结束。
         """
+        #cover_visual_url = 'https://i0.hdslb.com/bfs/live/526d56bbf23304860701061f8b789b5f0ff6e3a7.png' if cover_visual_url == '' else cover_visual_url
+        if cover_visual_url == '':
+            cover_visual = ''
+        else:
+            cover_visual = f"[CQ:image,file={cover_visual_url}]"
         raw_message = {
             "group_id": group_id,
-            "message": f"{anchor_name}直播结束了\r\n[CQ:image,file={cover_visual_url}]"
+            "message": f"{anchor_name}直播结束了\r\n{cover_visual}"
         }
         
         return self.send_group_message(raw_message)
@@ -136,8 +160,11 @@ class QQBotInfo:
         该函数构造一个包括主播的昵称、直播标题、直播房间号和封面图像URL的消息，
         并发送到指定的QQ群中，用于提醒群成员关注直播。
         """
-        
-        message_content = f"{anchor_name}正在直播【{live_title}】\r\nhttps://live.bilibili.com/{room_number}\r\n[CQ:image,file={cover_visual_url}]"
+        if cover_visual_url == '':
+            cover_visual = ''
+        else:
+            cover_visual = f"[CQ:image,file={cover_visual_url}]"
+        message_content = f"{anchor_name}正在直播【{live_title}】\r\nhttps://live.bilibili.com/{room_number}\r\n{cover_visual}"
         if at_all:
             message_content = "[CQ:at,qq=all] " + message_content
         elif at_list:
@@ -173,85 +200,143 @@ class BilibiliMain:
         dict: API响应转换成的字典。
         """
         url = f"{self.base_url}{endpoint}"
+        method = method.upper()  # 转换为大写字母
+        if method not in ["GET","POST"]:
+            raise ValueError("提供的 HTTP 方法不受支持，目前只支持POST和GET")
         while True:
-            if method == "GET":
-                response = self.session.get(url, params=params)
-            elif method == "POST":
-                response = self.session.post(url, data=data)
-            else:
-                raise ValueError("Unsupported HTTP method provided")
+            # 发送请求和处理连接错误
+                                                               
+                                  
+                                                            
+                 
+                                                                    
 
+            try:
+                if method == "GET":
+                    response = self.session.get(url, params=params)
+                elif method == "POST":
+                    response = self.session.post(url, data=data)
+            except requests.exceptions.ConnectionError as e:
+                print("连接错误，可能是服务器关闭了连接，10秒后重试")
+                print(f"错误详情：{e}")
+                time.sleep(10)
+                continue
+            except requests.RequestException as e:
+                print(f"请求发送失败：{e}，10秒后重试")
+                time.sleep(10)
+                continue
+            
+            # 处理B站服务器返回数据和B站服务器故障解决方案
             try:
                 res_json = response.json()
             except json.JSONDecodeError:
-                if response.status_code == 502:
-                    print("服务器502繁忙")
+                if response.status_code in [502, 500]:
+                    print(f"服务器错误,B站返回错误代码：{response.status_code}，60秒后重试")
                     time.sleep(60)
                     continue
                 else:
                     print("无法解析JSON，响应内容为:", response.text)  # 打印响应内容
                     print(url,method,params,data)
                     sys.exit()
+            
+            # 处理API响应
             if res_json['code'] == 0:
                 return res_json
-            elif res_json['code'] == -504:
-                print("服务调用超时，3秒后重试")
+            elif res_json['code'] in [-504, -502, -500]:  # 使用in判断多个错误代码
+                print(f"服务调用错误，错误代码：{res_json['code']}，3秒后重试")
                 time.sleep(3)
                 continue
             elif res_json['code'] == -101:
                 sys.exit("B站返回账号未登陆-101，请检查配置文件，机器人已退出")
             elif res_json['code'] == -412:
-                print(f"请求B站过于频繁，ip被ban了：{res_json}")
+                print(f"请求B站过于频繁，ip被ban了：{res_json}，300秒后重试")
                 time.sleep(300)
                 continue
+            elif res_json['code'] == -400:
+                pass
+                time.sleep(3)
+                continue
+                #{'code': -400, 'message': "Key: 'MultiGetRoomNewsReq.RoomIds' Error:Field validation for 'RoomIds' failed on the 'required' tag", 'ttl': 1, 'data': {'title': '哔哩哔哩直播 - 我的关注', 'pageSize': 10, 'totalPage': 12, 'list': [], 'count': 119, 'never_lived_count': 10, 'live_count': 0, 'never_lived_faces': []}}
             else:
+                print(url,params,data)
                 sys.exit(f"异常情况，请将B站返回信息提交issus，B站返回信息：{res_json}")
+                
 
     def send_bilibili_live_api_request(self, endpoint, method, params=None, data=None):
-            """
-            向B站API发送统一的HTTP请求。
-            参数:
-            endpoint (str): API的终点URL。
-            method (str): 请求使用的方法，如'GET'、'POST'等。
-            params (dict, optional): URL参数，用于GET请求。
-            data (dict, optional): 请求体数据，用于POST请求。
-            返回:
-            dict: API响应转换成的字典。
-            """
-            url = f"https://api.live.bilibili.com{endpoint}"
-            while True:
+        """
+        向B站API发送统一的HTTP请求。
+        参数:
+        endpoint (str): API的终点URL。
+        method (str): 请求使用的方法，如'GET'、'POST'等。
+        params (dict, optional): URL参数，用于GET请求。
+        data (dict, optional): 请求体数据，用于POST请求。
+        返回:
+        dict: API响应转换成的字典。
+        """
+        url = f"https://api.live.bilibili.com{endpoint}"
+        method = method.upper()  # 转换为大写字母
+        if method not in ["GET","POST"]:
+            raise ValueError("提供的 HTTP 方法不受支持，目前只支持POST和GET")
+        while True:
+            # 发送请求和处理连接错误
+            try:
                 if method == "GET":
                     response = self.session.get(url, params=params)
                 elif method == "POST":
                     response = self.session.post(url, data=data)
+            except requests.exceptions.ConnectionError as e:
+                print("连接错误，可能是服务器关闭了连接，10秒后重试")
+                print(f"错误详情：{e}")
+                    
+                                              
+                                            
+                                                   
+                                                   
+                time.sleep(10)
+                continue
+            except requests.RequestException as e:
+                                                                                                         
+                                                     
+                                  
+                                         
+                                   
+                                              
+                print(f"请求发送失败：{e}，10秒后重试")
+                time.sleep(10)
+                continue
+            
+            # 处理B站服务器返回数据和B站服务器故障解决方
+            try:
+                res_json = response.json()
+            except json.JSONDecodeError:
+                if response.status_code in [502, 500]:
+                    print(f"服务器错误,B站返回错误代码：{response.status_code}，60秒后重试")
+                    time.sleep(60)
+                    continue
                 else:
-                    raise ValueError("Unsupported HTTP method provided")
+                    print("无法解析JSON，响应内容为:", response.text)
+                    print(url, method, params, data)
+                    sys.exit()
+            
+            # 处理API响应
+            if res_json['code'] == 0:
+                return res_json
+            elif res_json['code'] in [-504, -502, -500]:  # 使用in判断多个错误代码
+                print(f"服务调用错误，错误代码：{res_json['code']}，3秒后重试")
+                time.sleep(3)
+                continue
+            elif res_json['code'] == -101:
+                sys.exit("B站返回账号未登陆-101，请检查配置文件，机器人已退出")
+            elif res_json['code'] == -412:
+                print(f"请求B站过于频繁，ip被ban了：{res_json}，300秒后重试")
+                time.sleep(300)
+                continue
+            elif res_json['code'] == -400:
+                time.sleep(3)
+                continue
+            else:
+                sys.exit(f"异常情况，请将B站返回信息提交issus，B站返回信息：{res_json}")
 
-                try:
-                    res_json = response.json()
-                except json.JSONDecodeError:
-                    if response.status_code == 502:
-                        print("服务器502繁忙")
-                        time.sleep(60)
-                        continue
-                    else:
-                        print("无法解析JSON，响应内容为:", response.text)  # 打印响应内容
-                        print(url,method,params,data)
-                        sys.exit()
-                if res_json['code'] == 0:
-                    return res_json
-                elif res_json['code'] == -504:
-                    print("服务调用超时，3秒后重试")
-                    time.sleep(3)
-                    continue
-                elif res_json['code'] == -101:
-                    sys.exit("B站返回账号未登陆-101，请检查配置文件，机器人已退出")
-                elif res_json['code'] == -412:
-                    print(f"请求B站过于频繁，ip被ban了：{res_json}")
-                    time.sleep(300)
-                    continue
-                else:
-                    sys.exit(f"异常情况，请将B站返回信息提交issus，B站返回信息：{res_json}")
 
     def get_account_info(self):
         """
@@ -292,7 +377,7 @@ class BilibiliMain:
         return follow_info
     
     
-    def 批量关注(self要关注的up主的uid列表):
+    def 批量关注(self, 要关注的up主的uid列表):
         
         """
         处理一个包含多个字典的列表，每个字典至少包含 'uid' 键。
@@ -311,7 +396,7 @@ class BilibiliMain:
         # 遍历唯一的uid集合并调用关注B站UP主函数
         results = []
         for uid in unique_uids:
-            result = 关注B站UP主(uid)
+            result = self.关注B站UP主(uid)
             results.append(result)
             time.sleep(1)   #防止关注的太快被ban
         return results
@@ -352,7 +437,7 @@ class BilibiliMain:
             for item in missing_live_mids:
                 uid = item['uid']
                 params = {"ruid": uid, "platform": "pc"}
-                data = self.send_bilibili_api_request(base_url, "GET", params=params)
+                data = self.send_bilibili_live_api_request(base_url, "GET", params=params)
 
                 if data and data['code'] == 0:
                     user_data = data['data']
@@ -580,8 +665,8 @@ class SQLManager(object):
         self.cursor = self.conn.cursor(cursor=pymysql.cursors.DictCursor)
         # 创建数据库,不存在才创建
         try:
-            self.moddify("create database if not exists %s" % DB_CONFIG["db"])
-            self.moddify("use %s" % DB_CONFIG["db"])
+            self.modify("create database if not exists %s" % DB_CONFIG["db"])
+            self.modify("use %s" % DB_CONFIG["db"])
         except pymysql.Error as e:
             raise Exception(f"数据库测试失败: {e}")
             sys.exit(0)
@@ -596,7 +681,7 @@ class SQLManager(object):
         result = self.cursor.fetchone()
         return result
     # 执行单条SQL语句
-    def moddify(self, sql, args=None):
+    def modify(self, sql, args=None):
         self.cursor.execute(sql, args)
         self.conn.commit()
     # 我如果要批量执行多个创建操作，虽然只建立了一次数据库连接但是还是会多次提交，
@@ -639,7 +724,7 @@ class SQLManager(object):
             INDEX `idx_time` (`time`),
             INDEX `idx_count` (`time`,`username`)
             )ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;"""
-        self.moddify(sqlCreateLog)'''
+        self.modify(sqlCreateLog)'''
         
         pass
         return True
@@ -706,10 +791,10 @@ class SQLManager(object):
         args = (data[0], data[1])
         
         return self.getOne(sql_select_data, args)
+    
         
-        
-    #todo 开播提醒和下播提醒缓存
-    #todo 更新数据表livetimestamp
+                                           
+                                      
 
     def LoadLiveRoomInfo(self):
         sql_select_data = 'SELECT `uid`, `mid`, `name`, `room_id`, `room_url` FROM `userinfo` WHERE 1;'
@@ -772,7 +857,7 @@ class DDBOTMain():
         
         return 缺少直播间号的群关注列表
     
-    def 批量更新房间号信息(user_list):
+    def 批量更新房间号信息(user_list, DB_CONFIG):
         """
         批量更新用户信息到数据库。
         参数:
@@ -782,7 +867,7 @@ class DDBOTMain():
         """
         results = []  # 初始化一个空列表来存储每次操作的结果
         if len(user_list) > 0:
-            DB = SQLManager()
+            DB = SQLManager(DB_CONFIG)
             for user in user_list:
                 # 提取字典中的所有值
                 user_info = [user['uid'], user['mid'], user['name'], user['room_id'], user['room_url']]
@@ -868,7 +953,10 @@ class DDBOTMain():
             live_status = 'live' if entry['live_status'] == 1 else 'offline'
             last_live_timestamp = 开播时间戳 if entry['live_status'] == 1 else entry['record_live_time']
             room_cover_url = entry['room_cover']
-            room_cover_base64 = DDBOTMain.encode_image_to_base64(room_cover_url)
+            if room_cover_url == '':
+                room_cover_base64 = ''
+            else:
+                room_cover_base64 = DDBOTMain.encode_image_to_base64(room_cover_url)
             data = [uid, roomid, live_status, last_live_timestamp, room_cover_url, room_cover_base64, ""]
             if entry['live_status'] == 1:
                 returns.append(DB.UpdateLiveTimeStamp(data))
@@ -879,14 +967,14 @@ class DDBOTMain():
 
 if __name__ == '__main__':
     
-    print("正在初始化配置文件")
+    logging.info("正在初始化配置文件")
     yaml_file_path = 'application.yaml'
     application = yaml_to_json(yaml_file_path)
     print("配置文件初始化完成，正在连接到QQNT，请稍后")
     QQNTBOT = QQBotInfo(application["bot"]["send"]["url"], application["bot"]["send"]["accesstoken"])
     
     QQ_Account_Info = QQNTBOT.get_bot_account_info()
-    #print("Bot Account Info:", QQ_Account_Info)
+    logging.info("Bot Account Info:"+ str(QQ_Account_Info))
     if QQ_Account_Info["status"] == "ok":
         if QQ_Account_Info["data"]["user_id"] >9999:
             qid = QQ_Account_Info["data"]["user_id"]
@@ -896,14 +984,14 @@ if __name__ == '__main__':
         sys.exit("连接失败，正在退出DDBOTNT")
     
     QQ_Friends_List = QQNTBOT.get_qq_friends_list()["data"][:]
-    #print("Friends List:", QQ_Friends_List)
+    logging.info("Friends List:"+ str(QQ_Friends_List))
     print("QQ好友列表初始化完成，一共", len(QQ_Friends_List),"个好友")
     
     QQ_Groups_List = QQNTBOT.get_qq_groups_list()["data"][:]
-    #print("Groups List:", QQ_Groups_List)
+    logging.info("Groups List:"+ str(QQ_Groups_List))
     print("QQ群列表初始化完成，一共", len(QQ_Groups_List),"个群")
     
-    print("正在初始化B站会话")
+    logging.info("正在初始化B站会话")
     Bilibili_Session = requests.Session()
     Bilibili_Session.headers.update({
         'User-Agent': 'Mozilla/5.1 (X11; UOS V20; SM3) DDBOTNT/5.2 (KHTML, like Gecko) Firefox/99.100'
@@ -916,7 +1004,7 @@ if __name__ == '__main__':
     
     Bilibili = BilibiliMain(Bilibili_Session)
     Bilibili_Account_Info = Bilibili.get_account_info()
-    #print("账号信息:", Bilibili_Account_Info)
+    logging.info("账号信息:"+ str(Bilibili_Account_Info))
     Mid = Bilibili_Account_Info["data"]["mid"]
     VipLevel = Bilibili_Account_Info["data"]["vip_label"]["text"]
     CurrentLevel = Bilibili_Account_Info["data"]["level_info"]["current_level"]
@@ -924,10 +1012,10 @@ if __name__ == '__main__':
     print(f"B站启动成功，当前使用账号：{Uname} UID:{Mid} {VipLevel} LV{CurrentLevel}")
     Bilibili_Follow_List = Bilibili.get_follow_list(vmid=Bilibili_Account_Info["data"]["mid"])
     
-    #print("关注列表:", Bilibili_Follow_List)
+    logging.info("关注列表:"+ str(Bilibili_Follow_List))
     print("关注列表加载完成，一共",len(Bilibili_Follow_List),"位用户")
     
-    print("正在初始化数据库")
+    logging.info("正在初始化数据库")
     DB_CONFIG = {
         "host": application["dbConfig"]["host"],
         "port": application["dbConfig"]["port"],
@@ -941,7 +1029,7 @@ if __name__ == '__main__':
     try:
         Concernstate = DB.LoadConcernstate()
     except Exception as e:
-        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),
+        logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+
                 '读取本地群关注信息数据库出错！', e)
         sys.exit(0)
     if Concernstate is None:
@@ -954,7 +1042,7 @@ if __name__ == '__main__':
     try:
         Live_Room_Info = DB.LoadLiveRoomInfo()
     except Exception as e:
-        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),
+        logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+
                 '读取本地直播间号缓存信息数据库出错！', e)
         sys.exit(0)
     if Live_Room_Info is None:
@@ -964,42 +1052,46 @@ if __name__ == '__main__':
         #print("Live_Room_Info:\n", Live_Room_Info)
         pass
         
-    print("正在核对关注列表和群列表")
+    logging.info("正在核对关注列表和群列表")
     missing_groups = DDBOTMain.查群号(QQ_Groups_List, Concernstate)
     if len(missing_groups) > 0:
         print("检测到异常，机器人不在下列群中：",missing_groups)
-        print("请手动删除数据库中的数据后再启动机器人，以后会优化的")#todo
-        sys.exit(0)
+        logging.info("检测到异常，机器人不在下列群中："+ str(missing_groups))
+        sys.exit("请手动删除数据库中的数据后再启动机器人，以后会优化的")#todo
     else:
-        print("关注列表和群列表核对完毕，关注列表所在群没有异常")
-        
-    print()
+        logging.info("关注列表和群列表核对完毕，关注列表所在群没有异常")
+    
+           
     missing_mids = DDBOTMain.查关注(Concernstate, Bilibili_Follow_List)
     if len(missing_mids) > 0:
         print("检测到异常，这些用户不在关注列表中：", missing_mids)
+        logging.info("检测到异常，这些用户不在关注列表中："+ str(missing_mids))
         print("执行关注代码，让B站账号去关注这些缺失的uid")
+        logging.info("执行关注代码，让B站账号去关注这些缺失的uid")
         #[{'group_id': 972738870, 'uid': 247950681, 'push_mode': 'live'}]
         # todo 记得测试代码
         Bilibili.批量关注(missing_mids)
         print("执行关注代码成功，已将这些用户添加到关注列表中")
-        #sys.exit(0)
+        logging.info("执行关注代码成功，已将这些用户添加到关注列表中")
     else:
-        print("关注列表和账号关注核对完毕，关注列表均在关注列表中")
+        logging.info("关注列表和账号关注核对完毕，关注列表均在关注列表中")
         
     missing_live_mids = DDBOTMain.查房间号缺失情况(Concernstate, Live_Room_Info)
     
     if len(missing_live_mids) > 0:
         print("检测到异常，这些用户的房间号缺失：",missing_live_mids)
+        logging.info("检测到异常，这些用户的房间号缺失："+ str(missing_live_mids))
         #[{'group_id': 972738870, 'uid': 247950681, 'push_mode': 'live'}]
         需要添加的直播间信息 = Bilibili.通过uid获取直播间信息(missing_live_mids)
-        print("执行关注代码后的查询房间号输出：", 需要添加的直播间信息)
+        logging.info("执行关注代码后的查询房间号输出：", str(需要添加的直播间信息))
         # todo 记得测试代码
         if len(需要添加的直播间信息) > 0:
-            print(DDBOTMain.批量更新房间号信息(add_userinfo))
+            res = DDBOTMain.批量更新房间号信息(需要添加的直播间信息, DB_CONFIG)
+            logging.info(str(res))
         #todo 执行watch操作和查询操作
         #sys.exit(0)
     else:
-        print("关注直播的房间号核对完毕，所有需要关注直播推送的直播间信息对照没有缺失")
+        logging.info("关注直播的房间号核对完毕，所有需要关注直播推送的直播间信息对照没有缺失")
     
     # todo 检测推送状态为live的V有无房间号为0
     print("现在还没有自检程序，以后会有的")
@@ -1010,38 +1102,39 @@ if __name__ == '__main__':
     B站直播列表 = Bilibili.获取关注的开播信息()
     B站直播列表时间戳 = int(time.time())
     
-    # print("正在从总直播状态列表中，提取需要推送的UP直播状态信息")
+    logging.info("正在从总直播状态列表中，提取需要推送的UP直播状态信息")
     
     DDBOT关注的主播缓存 = DDBOTMain.提取关注的主播(B站直播列表['list'], Concernstate)
     
     #todo 更新数据表livetimestamp
-    #print(DDBOT关注的主播缓存)
+    logging.info("DDBOT关注的主播缓存"+ str(DDBOT关注的主播缓存))
     要更新数据库的主播缓存 = []
     for item in DDBOT关注的主播缓存:
         if item['live_status'] == 1 and (DB.GetLiveTimeStamp((item['uid'], item['roomid']))['live_status'] == "live"):
             # TODO: 添加未来处理直播中状态的代码
             pass
         else:
-            #print(item)
+            logging.info("已添加的要更新数据库的主播："+ str(item))
             要更新数据库的主播缓存.append(item)
     DDBOTMain.更新数据库直播缓存(要更新数据库的主播缓存, B站直播列表时间戳, DB_CONFIG)
-    print("数据库缓存同步完成")
+    logging.info("数据库缓存同步完成")
     
     DDBOT开播的主播缓存 = DDBOTMain.提取开播的主播(DDBOT关注的主播缓存)
     
-    #print("目前开播的直播间有：",DDBOT开播的主播缓存)
+    logging.info("目前开播的直播间有："+ str(DDBOT开播的主播缓存))
     
     print("直播推送初始化完毕")
+    logging.info("直播推送初始化完毕")
     
     while 1:
         当前B站开播的主播汇总 = Bilibili.获取开播主播信息(len(DDBOT开播的主播缓存))
         B站直播列表时间戳 = int(time.time())
         当前B站开播的主播人数 = 当前B站开播的主播汇总["live_count"]
         当前B站开播的主播列表 = 当前B站开播的主播汇总["list"]
-        #print("当前B站开播的主播列表:\n",当前B站开播的主播列表)
+        logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "当前B站开播的主播列表:\n" + str(当前B站开播的主播列表))
         当前群关注的B站主播列表 = DDBOTMain.提取关注的主播(当前B站开播的主播列表, Concernstate)
         当前群关注的B站开播主播列表 =  DDBOTMain.提取开播的主播(当前群关注的B站主播列表)
-        #print("当前群关注的B站开播主播列表:",当前群关注的B站开播主播列表)
+        logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "当前群关注的B站开播主播列表:" +str(当前群关注的B站开播主播列表))
         Q群推送列表 = []
         下播的主播 = DDBOTMain.下播判定(DDBOT开播的主播缓存, 当前群关注的B站开播主播列表)
         开播的主播 = DDBOTMain.下播判定(当前群关注的B站开播主播列表, DDBOT开播的主播缓存)
@@ -1049,15 +1142,18 @@ if __name__ == '__main__':
         
         
         if len(下播的主播) > 0:
-            print("检测到新下播的主播：",下播的主播)
-            #todo 更新数据表livetimestamp
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "检测到新下播的主播：",下播的主播)
+            logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "检测到新下播的主播："+ str(下播的主播))
             DDBOTMain.更新数据库直播缓存(下播的主播, B站直播列表时间戳, DB_CONFIG)
-            print("数据库缓存同步完成")
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "数据库缓存同步完成")
+            logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "数据库缓存同步完成")
             需要进行下播推送的群队列 = DDBOTMain.推送判定(下播的主播, Concernstate)
-            print("需要进行下播推送的群队列：", 需要进行下播推送的群队列)
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "需要进行下播推送的群队列：", 需要进行下播推送的群队列)
+            logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "需要进行下播推送的群队列："+ str(需要进行下播推送的群队列))
             已经开启下播推送的群队列 = DDBOTMain.下播开启判定(需要进行下播推送的群队列)
             if len(已经开启下播推送的群队列) > 0:
-                print("已经开启下播推送的群队列",已经开启下播推送的群队列)
+                print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "已经开启下播推送的群队列",已经开启下播推送的群队列)
+                logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "已经开启下播推送的群队列"+str(已经开启下播推送的群队列))
                 #try:
                 for item in 已经开启下播推送的群队列:
                     Res = QQNTBOT.发送下播通知(
@@ -1066,20 +1162,22 @@ if __name__ == '__main__':
                         cover_visual_url=item['room_cover']
                     )
                     time.sleep(2) 
-                    print(Res)
+                    
                 '''except Exception as e:
                     print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),
                             '推送下播消息提醒的队列出错了！', e)
                     print(item,已经开启下播推送的群队列)'''
         
         if len(开播的主播) > 0:
-            print("检测到新开播的主播：",开播的主播)
-            #todo 更新数据表livetimestamp
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "检测到新开播的主播：",开播的主播)
+            logging.info("检测到新开播的主播："+ str(开播的主播))
             DDBOTMain.更新数据库直播缓存(开播的主播, B站直播列表时间戳, DB_CONFIG)
-            print("数据库缓存同步完成")
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "数据库缓存同步完成")
+            logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "数据库缓存同步完成")
             需要进行开播推送的群队列 = DDBOTMain.推送判定(开播的主播, Concernstate)
             if len(需要进行开播推送的群队列) > 0:
-                print("需要进行开播推送的群队列：",需要进行开播推送的群队列)
+                print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())), "需要进行开播推送的群队列：",需要进行开播推送的群队列)
+                logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ "需要进行开播推送的群队列："+ str(需要进行开播推送的群队列))
                 #try:
                 for item in 需要进行开播推送的群队列:
                     Res = QQNTBOT.发送开播通知(
@@ -1091,8 +1189,8 @@ if __name__ == '__main__':
                         at_list=item['at_someone'],
                         at_all=True if item['at_all'] == "live" else False
                     )
-                    time.sleep(2) 
-                    print(Res)
+                    time.sleep(2)
+                              
                 '''except Exception as e:
                     print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),
                             '推送开播消息提醒的队列出错了！', e)
@@ -1101,7 +1199,7 @@ if __name__ == '__main__':
         DDBOT开播的主播缓存 = 当前群关注的B站开播主播列表
         
         休眠间隔 = int(application["bilibili"]["interval"][:-1])
-        print(f"没有检测到主播状态有变化，等待{休眠间隔}秒")
+        logging.info(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))+ f"没有检测到主播状态有变化，等待{休眠间隔}秒")
         
         
         time.sleep(休眠间隔)
