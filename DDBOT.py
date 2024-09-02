@@ -168,7 +168,7 @@ class QQBotInfo:
         if at_all:
             message_content = "[CQ:at,qq=all] " + message_content
         elif at_list:
-            message_content = ''.join([f"[CQ:at,qq={qq}] " for qq in at_list]) + message_content
+            message_content = ''.join([f"[CQ:at,qq={qq}] " for qq in json.loads(at_list)]) + message_content
 
         raw_message = {
             "group_id": group_id,
