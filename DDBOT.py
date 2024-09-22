@@ -50,6 +50,7 @@ def yaml_to_json(filepath):
     return yaml_content
 
 class QQBotInfo:
+    # todo 在调用QQ函数的时候，增加类似B站的容错，这样就可以保证QQ服务器不在127.0.0.1的时候，也能稳定运行
     def __init__(self, base_url, api_key):
         """
         初始化QQ机器人信息类。
@@ -62,23 +63,65 @@ class QQBotInfo:
         self.session = requests.Session()  # 创建session实例
         self.session.headers.update({
             'Authorization': f'{api_key}',
-            #'Content-Type': 'application/json'
+            'Content-Type': 'application/json'
         })
 
-    def send_bot_api_request(self, api_name):
+    def send_bot_api_request(self, api_name, method="GET", params=None, data=None):
         """
-        发送API请求。
-
+        向B站API发送统一的HTTP请求。
         参数:
-        api_name (str): API名称
-
+        api_name (str): API的名称。
+        method (str): 请求使用的方法，如'GET'、'POST'等。
+        params (dict, optional): URL参数，用于GET请求。
+        data (dict, optional): 请求体数据，用于POST请求。
         返回:
-        response: API请求的响应对象
+        dict: API响应转换成的字典。
         """
         url = f"{self.base_url}/{api_name}"
-        response = self.session.get(url)  # 使用session发送请求
-        return response.json()
-
+        method = method.upper()  # 转换为大写字母
+        if method not in ["GET","POST"]:
+            raise ValueError("提供的 HTTP 方法不受支持，目前只支持POST和GET")
+        while True:
+            # 发送请求和处理连接错误
+            try:
+                # 使用session发送请求
+                if method == "GET":
+                    response = self.session.get(url, params=params)
+                elif method == "POST":
+                    response = self.session.post(url, json=data)
+            except requests.exceptions.ConnectionError as e:
+                print("连接错误，可能是服务器关闭了连接，10秒后重试")
+                print(f"错误详情：{e}")
+                time.sleep(10)
+                continue
+            except requests.RequestException as e:
+                print(f"请求发送失败：{e}，10秒后重试")
+                time.sleep(10)
+                continue
+            
+            try:
+                res_json = response.json()
+            except json.JSONDecodeError:
+                if response.status_code == 403:
+                    sys.exit("程序出错，请检查headers中的Authorization的值，和QQ设置面板中的api key是否一致")
+                elif response.status_code >= 400:
+                    print(url,method,params,data)
+                    sys.exit(f"服务器错误,LLONEBOT返回错误代码：{response.status_code}")
+                else:
+                    print("无法解析JSON，响应内容为:", response.text)  # 打印响应内容
+                    print(url,method,params,data)
+                    sys.exit()
+            #200 {"status":"failed","retcode":200,"data":null,"message":"Error: Timeout: NTEvent EventName:NodeIKernelMsgService/sendMsg ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:\n{}\n","wording":"Error: Timeout: NTEvent EventName:NodeIKernelMsgService/sendMsg ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:\n{}\n","echo":null}
+            #200 {"status":"ok","retcode":0,"data":{"message_id":-2146736417},"message":"","wording":"","echo":null}
+            
+            if res_json["status"].lower() in ["ok","failed"] :
+                return res_json
+            elif response.status_code == 200:
+                return res_json
+            else:
+                print("这个返回的值为什么会触发这个if分支呢？：", res_json)
+                return res_json
+    
     def send_group_message(self, raw_message):
         """
         发送群消息。
@@ -90,8 +133,8 @@ class QQBotInfo:
         response: 发送消息的响应对象
         """
         url = f"{self.base_url}/send_group_msg"
-        response = self.session.post(url=url, json=raw_message)  # 使用json参数而不是data
-        return response.text
+        response = self.send_bot_api_request(api_name="send_group_msg", method="POST", data=raw_message)  # 使用json参数而不是data
+        return response
 
     def get_bot_account_info(self):
         """
@@ -205,12 +248,6 @@ class BilibiliMain:
             raise ValueError("提供的 HTTP 方法不受支持，目前只支持POST和GET")
         while True:
             # 发送请求和处理连接错误
-                                                               
-                                  
-                                                            
-                 
-                                                                    
-
             try:
                 if method == "GET":
                     response = self.session.get(url, params=params)
@@ -287,20 +324,9 @@ class BilibiliMain:
             except requests.exceptions.ConnectionError as e:
                 print("连接错误，可能是服务器关闭了连接，10秒后重试")
                 print(f"错误详情：{e}")
-                    
-                                              
-                                            
-                                                   
-                                                   
                 time.sleep(10)
                 continue
             except requests.RequestException as e:
-                                                                                                         
-                                                     
-                                  
-                                         
-                                   
-                                              
                 print(f"请求发送失败：{e}，10秒后重试")
                 time.sleep(10)
                 continue
@@ -792,10 +818,6 @@ class SQLManager(object):
         
         return self.getOne(sql_select_data, args)
     
-        
-                                           
-                                      
-
     def LoadLiveRoomInfo(self):
         sql_select_data = 'SELECT `uid`, `mid`, `name`, `room_id`, `room_url` FROM `userinfo` WHERE 1;'
         try:
@@ -1035,8 +1057,6 @@ if __name__ == '__main__':
     if Concernstate is None:
         sys.exit("本地数据库返回群关注信息错误")
     else:
-        #[{'group_id': 1014391660, 'uid': 289491763, 'push_mode': 'live/news', 'at_all': '', 'at_someone': None, 'filter_not_type': '["转发"]', 'offline_notify': 'live', 'title_change_notify': ''}, {'group_id': 1021378145, 'uid': 686241472, 'push_mode': 'live', 'at_all': 'live', 'at_someone': None, 'filter_not_type': None, 'offline_notify': 'live', 'title_change_notify': ''},
-        #print("Concernstate:\n", Concernstate)
         pass
     
     try:
@@ -1048,8 +1068,6 @@ if __name__ == '__main__':
     if Live_Room_Info is None:
         sys.exit("本地数据库返回直播间号错误")
     else:
-        #[{'uid': 10987727, 'mid': 10987727, 'name': '残剑-Truekep', 'room_id': 1332415, 'room_url': 'https://live.bilibili.com/1332415'}, {'uid': 1159607701, 'mid': 1159607701, 'name': '星巡Meguri', 'room_id': 22921925, 'room_url': 'https://live.bilibili.com/22921925'},
-        #print("Live_Room_Info:\n", Live_Room_Info)
         pass
         
     logging.info("正在核对关注列表和群列表")
@@ -1061,15 +1079,12 @@ if __name__ == '__main__':
     else:
         logging.info("关注列表和群列表核对完毕，关注列表所在群没有异常")
     
-           
     missing_mids = DDBOTMain.查关注(Concernstate, Bilibili_Follow_List)
     if len(missing_mids) > 0:
         print("检测到异常，这些用户不在关注列表中：", missing_mids)
         logging.info("检测到异常，这些用户不在关注列表中："+ str(missing_mids))
         print("执行关注代码，让B站账号去关注这些缺失的uid")
         logging.info("执行关注代码，让B站账号去关注这些缺失的uid")
-        #[{'group_id': 972738870, 'uid': 247950681, 'push_mode': 'live'}]
-        # todo 记得测试代码
         Bilibili.批量关注(missing_mids)
         print("执行关注代码成功，已将这些用户添加到关注列表中")
         logging.info("执行关注代码成功，已将这些用户添加到关注列表中")
@@ -1081,15 +1096,11 @@ if __name__ == '__main__':
     if len(missing_live_mids) > 0:
         print("检测到异常，这些用户的房间号缺失：",missing_live_mids)
         logging.info("检测到异常，这些用户的房间号缺失："+ str(missing_live_mids))
-        #[{'group_id': 972738870, 'uid': 247950681, 'push_mode': 'live'}]
         需要添加的直播间信息 = Bilibili.通过uid获取直播间信息(missing_live_mids)
         logging.info("执行关注代码后的查询房间号输出：", str(需要添加的直播间信息))
-        # todo 记得测试代码
         if len(需要添加的直播间信息) > 0:
             res = DDBOTMain.批量更新房间号信息(需要添加的直播间信息, DB_CONFIG)
             logging.info(str(res))
-        #todo 执行watch操作和查询操作
-        #sys.exit(0)
     else:
         logging.info("关注直播的房间号核对完毕，所有需要关注直播推送的直播间信息对照没有缺失")
     
@@ -1190,7 +1201,6 @@ if __name__ == '__main__':
                         at_all=True if item['at_all'] == "live" else False
                     )
                     time.sleep(2)
-                              
                 '''except Exception as e:
                     print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())),
                             '推送开播消息提醒的队列出错了！', e)
